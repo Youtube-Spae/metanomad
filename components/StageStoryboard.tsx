@@ -5,7 +5,7 @@ import { TravelTheme, Scene } from '../types';
 
 interface Props {
   theme: TravelTheme;
-  scenes: Scene[];
+  scenes: Scene[]; 
   storyDetails?: { style: string, reason: string, format?: string } | null;
   onNext: () => void;   onBack: () => void;
 }
