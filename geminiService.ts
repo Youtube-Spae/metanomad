@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { TravelTheme, Scene, LocationContext, Character } from "./types";
 
@@ -84,7 +83,7 @@ export const analyzeImageForThemes = async (base64Image: string, mimeType: strin
 
 export const analyzeCharacterImage = async (base64Image: string, mimeType: string): Promise<string> => {
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3.1-pro-preview',
     contents: [
       {
         inlineData: {
@@ -343,7 +342,7 @@ export const generateStoryBase = async (
   `;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3.1-pro-preview',
     contents: prompt,
     config: {
       thinkingConfig: { thinkingBudget: 32768 },
@@ -490,7 +489,7 @@ export const generateImagePrompts = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-3.1-pro-preview',
       contents: prompt,
       config: {
         thinkingConfig: { thinkingBudget: 8192 },
