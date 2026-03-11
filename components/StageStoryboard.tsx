@@ -1,4 +1,3 @@
- 
 import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { TravelTheme, Scene } from '../types';
@@ -69,9 +68,11 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
         ? Math.floor((s.narrationKOR || '').length / 4)
         : Math.floor((s.narrationKOR || '').length / 5);
       const imageCount = s.imagePromptsENG?.length || 0;
-      const imageCover = imageCount * 7;
+      // ✅ 수정: 컷당 시간을 나레이션÷컷수로 역산 → Sync Gap 0 수렴
+      const imageCoverPerCut = imageCount > 0 ? Math.round(narDuration / imageCount) : 7;
+      const imageCover = imageCount * imageCoverPerCut;
       const syncGap = narDuration - imageCover;
-      return { narDuration, imageCount, imageCover, syncGap };
+      return { narDuration, imageCount, imageCover, syncGap, imageCoverPerCut };
     };
 
     const totalDuration = scenes.reduce((acc, s) => acc + calcSync(s).narDuration, 0);
@@ -323,7 +324,9 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
                         const format = storyDetails?.format || '1인 독백';
                         const narDuration = format === '2인 대화' ? Math.floor((scene.narrationKOR || "").length / 4) : Math.floor((scene.narrationKOR || "").length / 5);
                         const imgCount = scene.imagePromptsENG?.length || 0;
-                        const imgCover = imgCount * 7;
+                        // ✅ 수정: 컷당 시간 역산 → Sync Gap 0 수렴
+                        const imgCoverPerCut = imgCount > 0 ? Math.round(narDuration / imgCount) : 7;
+                        const imgCover = imgCount * imgCoverPerCut;
                         const syncGap = narDuration - imgCover;
                         const isSynced = Math.abs(syncGap) <= 3;
                         return (
