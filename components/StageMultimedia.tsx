@@ -132,10 +132,10 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
       const getVoiceIdForSpeaker = (name: string) => {
         try {
           const chars = JSON.parse(
-            localStorage.getItem('character_list') || '[]'
+            sessionStorage.getItem('character_list') || '[]'
           )
           const selectedIds = JSON.parse(
-            localStorage.getItem('selectedCharacterIds') || '[]'
+            sessionStorage.getItem('selectedCharacterIds') || '[]'
           )
           const selected = chars.filter(
             (c: any) => selectedIds.includes(c.id)
