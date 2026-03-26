@@ -12,11 +12,12 @@
 - [x] TTS Rate Limit 재시도: 3회 retry + 2초 딜레이 (252c19e)
 - [x] 이미지 프롬프트 순서: claudeService.ts 순차처리 이미 완료
 - [x] syncSpeakers localStorage 버그 수정 — sessionStorage→localStorage (9aec5f8)
-  → Noah 등 남성 캐릭터 성별 감지 실패 원인 해결
 - [x] TTS 429 에러 감지 → 5초 대기 강화 (기존 2초) (9aec5f8)
+- [x] TTS voice 근본 버그 수정 — 등장 순서 의존 → 캐릭터 이름 직접 매핑 (0fbcf0d)
+  → Yurang(female)→kore / Noah(male)→charon, 등장 순서 무관 정확 분기
 
 ## 🔴 미완료 (다음 세션 시작점)
-- [ ] Noah(남성) Charon voice 적용 확인 — F12 콘솔에서 "syncSpeakers: Noah(male) → charon" 확인
+- [ ] Noah(남성) Charon voice 적용 최종 확인 — F12 콘솔에서 charVoiceMap 확인
 - [ ] TTS 배치 실행 → 씬 4,8,9 Rate Limit 실패 재현 여부 확인 (9aec5f8 적용 후)
 - [ ] 새 스토리보드 생성 → 나레이션 560~620자 정상 생성 확인 (10씬 기준)
 - [ ] TTS 배치 실행 → 씬당 85~94초 범위 달성 확인
