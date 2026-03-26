@@ -172,15 +172,35 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
     const rawTurns = splitBySpeaker(text);
     const parsedTurns = rawTurns.map(parseTurn).filter(t => t.content.length > 0);
 
-    // ✏️ 등장 순서로 화자-보이스 매핑: 1번째=speaker1(여), 2번째=speaker2(남)
+    // ✏️ 캐릭터 이름 → gender → voice 직접 매핑 (등장 순서 무관)
+    const buildCharVoiceMap = (): Record<string, string> => {
+      try {
+        const storedChars = localStorage.getItem('character_list') || localStorage.getItem('characters');
+        if (!storedChars) return {};
+        const chars = JSON.parse(storedChars);
+        const map: Record<string, string> = {};
+        if (Array.isArray(chars)) {
+          chars.forEach((c: any) => {
+            const g = (c.gender || '').toLowerCase();
+            map[c.name] = g === 'male' ? 'charon' : 'kore';
+          });
+        }
+        return map;
+      } catch { return {}; }
+    };
+    const charVoiceMap = buildCharVoiceMap();
+
+    // ✏️ 등장 순서 폴백 유지 (캐릭터 맵에 없는 화자 처리용)
     const speakerOrder: string[] = [];
     parsedTurns.forEach(({ speaker }) => {
       if (speaker && !speakerOrder.includes(speaker)) speakerOrder.push(speaker);
     });
-    const getVoice = (speaker: string) =>
-      speakerOrder.indexOf(speaker) === 1 ? speaker2.voiceId : speaker1.voiceId;
+    const getVoice = (speaker: string): string => {
+      if (charVoiceMap[speaker]) return charVoiceMap[speaker]; // 이름 직접 매핑
+      return speakerOrder.indexOf(speaker) === 1 ? speaker2.voiceId : speaker1.voiceId; // 폴백
+    };
 
-    console.log(`씬${sceneNum} | 턴수:${parsedTurns.length} | 화자:[${speakerOrder.join('→')}] | 보이스:[${speaker1.voiceId}(여)/${speaker2.voiceId}(남)]`);
+    console.log(`씬${sceneNum} | 턴수:${parsedTurns.length} | 화자:[${speakerOrder.join('→')}] | charVoiceMap:${JSON.stringify(charVoiceMap)}`);
 
     const allPcmBytes: Uint8Array[] = [];
 
