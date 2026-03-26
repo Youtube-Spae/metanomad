@@ -15,7 +15,7 @@ async function callClaude(
   }
 
   const controller = new AbortController();
-  const fetchTimeout = setTimeout(() => controller.abort(), 60000);
+  const fetchTimeout = setTimeout(() => controller.abort(), 120000); // ✏️ 60초 → 120초
 
   let response: Response;
   try {
@@ -40,7 +40,7 @@ async function callClaude(
   } catch (err) {
     clearTimeout(fetchTimeout);
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Claude API 요청 시간 초과 (60초). 네트워크 상태를 확인하고 재시도해주세요.');
+      throw new Error('Claude API 요청 시간 초과 (120초). 네트워크 상태를 확인하고 재시도해주세요.');
     }
     throw err;
   }
@@ -258,7 +258,7 @@ Return ONLY one comma-separated English prompt paragraph. Example: "A 20-year-ol
   }
 };
 
-// ✏️ generateStoryBase — sonnet (기승전결 14씬 구조만, 나레이션 제외)
+// ✏️ generateStoryBase — sonnet (기승전결 10씬 구조만, 나레이션 제외)
 // 나레이션은 generateNarration에서 씬별 별도 생성
 export const generateStoryBase = async (
   theme: TravelTheme | string,
@@ -298,11 +298,11 @@ ${selectedCharacters[1]?.name ? `${selectedCharacters[1].name}: ${char2Prompt}` 
   }
 
   const storyStructureRules = `
-[기승전결 14씬 구조 - 절대 준수]
-기 (Hook) 3씬: 가장 시각적으로 강렬한 순간으로 시작. 철학적 질문으로 공감 유도. 씬1 videoPromptENG는 반드시 "camera viewfinder UI overlay, focus brackets, exposure meter display, POV through lens effect,"로 시작.
-승 (Build-up) 4씬: 감각적 경험 전달 (소리, 냄새, 색). 지역 역사·문화 자연스럽게 삽입. IT 은유 1개 자연스럽게 삽입 (logout/sync/reboot/offline cache/sleep mode).
-전 (Climax) 4씬: 예상 못한 발견이나 깨달음. 감정적 긴장 또는 감동적 순간. MetaNomad 철학 연결: '모든 골목이 목적지'.
-결 (Outro) 3씬: 씬12~13: 석양이나 밤 풍경으로 감정적 마무리. 씬14: CTA만 — 댓글 유도 질문. 다음 여정 예고 없음.
+[기승전결 10씬 구조 - 절대 준수] ✏️ 14→10씬 (응답 속도 최적화)
+기 (Hook) 2씬: 가장 시각적으로 강렬한 순간으로 시작. 철학적 질문으로 공감 유도. 씬1 videoPromptENG는 반드시 "camera viewfinder UI overlay, focus brackets, exposure meter display, POV through lens effect,"로 시작.
+승 (Build-up) 3씬: 감각적 경험 전달 (소리, 냄새, 색). 지역 역사·문화 자연스럽게 삽입. IT 은유 1개 자연스럽게 삽입 (logout/sync/reboot/offline cache/sleep mode).
+전 (Climax) 3씬: 예상 못한 발견이나 깨달음. 감정적 긴장 또는 감동적 순간. MetaNomad 철학 연결: '모든 골목이 목적지'.
+결 (Outro) 2씬: 씬9: 석양이나 밤 풍경으로 감정적 마무리. 씬10: CTA만 — 댓글 유도 질문. 다음 여정 예고 없음.
 
 [반복 금지 규칙]
 - 각 씬 placeName 고유 (중복 금지)
@@ -436,10 +436,10 @@ export const generateNarration = async (
 - 5~7문장으로 구성
 - 목표 글자수: 반드시 560~620자 (실측 6.6자/초 × 85~94초 분량)`;
 
-  // ✏️ 씬14(Outro CTA)는 짧은 질문형으로 예외 처리
-  const isCtaScene = scene.number === 14 || scene.stage?.includes('결');
-  const narrationRuleFinal = isCtaScene && scene.number === 14
-    ? `씬14 CTA 규칙:
+  // ✏️ 씬10(Outro CTA)는 짧은 질문형으로 예외 처리 (14→10씬)
+  const isCtaScene = scene.number === 10 || scene.stage?.includes('결');
+  const narrationRuleFinal = isCtaScene && scene.number === 10
+    ? `씬10 CTA 규칙:
 - 댓글 유도 질문 형식 (시청자에게 직접 질문)
 - 목표 글자수: 80~120자 (짧고 강렬하게)
 - 예시: "여러분은 어떤 골목에서 멈춰본 적 있나요?"`
@@ -450,7 +450,7 @@ export const generateNarration = async (
     : '';
 
   const prompt = `당신은 감성적인 여행 다큐멘터리 나레이션 전문 작가입니다.
-지금 작성할 씬은 14씬 기승전결 구조의 씬 ${scene.number}번입니다.
+지금 작성할 씬은 10씬 기승전결 구조의 씬 ${scene.number}번입니다.
 
 [이번 씬 정보]
 스테이지: ${scene.stage}
@@ -478,7 +478,7 @@ ${prevContext}
 }`;
 
   // ✏️ 실측 기반 목표 수정: 실제 TTS 속도 6.6자/초 → 90초 기준 594자 필요
-  const targetMin = isCtaScene && scene.number === 14 ? 80 : (isMultiMode ? 530 : 560);
+  const targetMin = isCtaScene && scene.number === 10 ? 80 : (isMultiMode ? 530 : 560);
   // ✏️ 완전 실패 방지용: 미달이더라도 가장 긴 결과 보관
   let bestAttempt = { narrationKOR: '', narrationENG: '' };
 
@@ -610,7 +610,7 @@ export const generateImagePrompts = async (
 
 // ✏️ generateStoryArc — 오케스트레이션 (구조 개선)
 // 변경된 3단계 흐름:
-//   1. generateStoryBase   → 14씬 구조만 생성 (나레이션 제외)
+//   1. generateStoryBase   → 10씬 구조만 생성 (나레이션 제외) ✏️ 14→10씬
 //   2. generateNarration   → 씬별 순차 생성 + 이전 씬 컨텍스트 전달 (일관성 보장)
 //   3. generateImagePrompts → 컷 수 계산 후 이미지 프롬프트 생성
 export const generateStoryArc = async (
@@ -699,9 +699,9 @@ export const generateStoryArc = async (
     }
 
     // ── STEP 3: 이미지 프롬프트 생성 (나레이션 길이 기반 컷 수 계산) ──
-    // ✏️ 나레이션 14회 호출 직후 레이트리밋 방지 — 20초 대기
+    // ✏️ 나레이션 10회 호출 직후 레이트리밋 방지 — 10초 대기 (14씬 20초→10씬 10초)
     onProgress?.(`⏳ API 안정화 대기 중... (3/3단계 준비)`);
-    await new Promise(r => setTimeout(r, 20000));
+    await new Promise(r => setTimeout(r, 10000));
 
     onProgress?.(`🎬 이미지 프롬프트 생성 중... (3/3단계)`);
     const scenesWithImages: Scene[] = [];

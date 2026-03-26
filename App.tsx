@@ -174,7 +174,7 @@ const App: React.FC = () => {
             <div className="text-center space-y-2 mb-8">
               <p className="text-amber-900 text-xl font-bold animate-pulse">따뜻한 기록, 다큐멘터리 시퀀스 구성 중...</p>
               <p className="text-amber-700 text-base font-semibold mt-1 min-h-[24px]">{loadingProgress}</p>
-              <p className="text-stone-400 text-xs mt-1">씬 구조 → 나레이션 14씬 → 20초 안정화 → 이미지 14씬 | 약 8~12분</p>
+              <p className="text-stone-400 text-xs mt-1">씬 구조 → 나레이션 10씬 → 이미지 10씬 | 약 5~7분</p>
             </div>
             
             <button 
