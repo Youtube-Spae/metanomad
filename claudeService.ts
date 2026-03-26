@@ -14,23 +14,37 @@ async function callClaude(
     throw new Error('API_KEY_MISSING: VITE_CLAUDE_API_KEY 환경 변수가 설정되지 않았습니다. .env 파일에 VITE_CLAUDE_API_KEY=sk-ant-... 를 추가하세요.');
   }
 
-  const response = await fetch(CLAUDE_API_URL, {
-    method: 'POST',
-    headers: {
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      system: system + '\n\nIMPORTANT: Output ONLY raw JSON. No markdown, no code blocks, no explanation.',
-      messages: [
-        { role: 'user', content: userContent },
-      ],
-    }),
-  });
+  const controller = new AbortController();
+  const fetchTimeout = setTimeout(() => controller.abort(), 60000);
+
+  let response: Response;
+  try {
+    response = await fetch(CLAUDE_API_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        system: system + '\n\nIMPORTANT: Output ONLY raw JSON. No markdown, no code blocks, no explanation.',
+        messages: [
+          { role: 'user', content: userContent },
+        ],
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(fetchTimeout);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Claude API 요청 시간 초과 (60초). 네트워크 상태를 확인하고 재시도해주세요.');
+    }
+    throw err;
+  }
+  clearTimeout(fetchTimeout);
 
   if (!response.ok) {
     // ✏️ Fix 8: API 응답 전체 대신 status + error.message만 노출 (API 키·토큰 등 민감 정보 제거)

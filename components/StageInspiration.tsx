@@ -258,7 +258,6 @@ const StageInspiration: React.FC<Props> = ({ themes, usedThemeTitles, characters
     timeoutRef.current = setTimeout(() => {
       setIsLoading(false);
       setErrorMsg("응답 시간이 초과되었습니다. 재시도 버튼을 눌러주세요");
-      alert("응답 시간이 초과되었습니다. 재시도 버튼을 눌러주세요 (요청 시간 초과)");
     }, 120000);
 
     try {
