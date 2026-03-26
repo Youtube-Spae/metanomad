@@ -213,7 +213,7 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
       const voiceName = getVoice(speaker);
       console.log(`씬${sceneNum} 턴${i + 1}/${parsedTurns.length} [${speaker || '독백'}→${voiceName}]: ${content.substring(0, 25)}...`);
 
-      // ✏️ Rate Limit 대응: 최대 3회 재시도 + 실패 시 2초 딜레이
+      // ✏️ Rate Limit 대응: 최대 3회 재시도 + 429→10초 / 그 외→3초
       let success = false;
       for (let retry = 0; retry < 3; retry++) {
         try {
@@ -239,17 +239,23 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
             console.warn(`씬${sceneNum} 턴${i + 1}/${parsedTurns.length} ⚠️ 오디오 없음 (retry:${retry})`);
           }
         } catch (e: any) {
-          console.error(`씬${sceneNum} 턴${i + 1}/${parsedTurns.length} ❌ 실패 (retry:${retry}):`, e?.message || e);
-          // ✏️ 429 Rate Limit 에러 감지 → 5초 대기, 그 외 → 2초 대기
-          const is429 = String(e?.message || e).includes('429') || String(e?.message || e).toLowerCase().includes('rate');
-          const retryDelay = is429 ? 5000 : 2000;
-          if (retry < 2) await new Promise(r => setTimeout(r, retryDelay));
+          const errMsg = String(e?.message || e);
+          const is429 = errMsg.includes('429') || errMsg.toLowerCase().includes('rate');
+          const retryDelay = is429 ? 10000 : 3000;
+          console.error(`씬${sceneNum} 턴${i + 1}/${parsedTurns.length} ❌ 실패 (retry:${retry}) — ${is429 ? '429 Rate Limit' : '일반 에러'}`);
+          if (retry < 2) {
+            console.log(`⏳ [턴 재시도 대기] ${retryDelay / 1000}초 대기 중... (retry:${retry + 1}/3)`);
+            await new Promise(r => setTimeout(r, retryDelay));
+          }
         }
       }
       if (!success) console.warn(`씬${sceneNum} 턴${i + 1} 3회 재시도 모두 실패 — 해당 턴 스킵`);
 
       // ✏️ 턴간 7초 대기 (flash 모델 Rate Limit 안전 유지)
-      if (i < parsedTurns.length - 1) await new Promise(r => setTimeout(r, 7000));
+      if (i < parsedTurns.length - 1) {
+        console.log(`⏳ [턴 간 대기] 씬${sceneNum} 턴${i + 1}→${i + 2} 사이 7초 대기 중...`);
+        await new Promise(r => setTimeout(r, 7000));
+      }
     }
 
     if (allPcmBytes.length === 0) throw new Error("Audio data not found in response");
@@ -355,13 +361,14 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
           return blob;
         } catch(e: any) {
           const errMsg = e?.message || String(e);
-          console.error(`씬${sceneNum} TTS 시도 ${i + 1}/${maxRetries} 실패:`, errMsg);
+          const is429 = e?.status === 429 || errMsg.includes('429') || errMsg.toLowerCase().includes('rate');
+          console.error(`씬${sceneNum} TTS 씬레벨 시도 ${i + 1}/${maxRetries} 실패 — ${is429 ? '429 Rate Limit' : '일반 에러'}`);
           if (i < maxRetries - 1) {
-            const delay = (e?.status === 429 || errMsg.includes('429')) ? 8000 : 5000;
+            const delay = is429 ? 10000 : 5000;
+            console.log(`⏳ [씬 재시도 대기] 씬${sceneNum} ${delay / 1000}초 대기 중... (시도:${i + 2}/${maxRetries})`);
             await new Promise(r => setTimeout(r, delay));
           } else {
-            // 마지막 시도 실패 시 에러 메시지 노출
-            console.error(`씬${sceneNum} 최종 실패 — 에러:`, errMsg);
+            console.error(`씬${sceneNum} 최종 실패 (씬레벨 ${maxRetries}회 모두 실패)`);
           }
         }
       }
@@ -398,8 +405,11 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
         console.log(`씬 ${scene.number} 완료`);
       }
       
-      // ✏️ 3000 → 12000: Gemini TTS API rate limit 대응 (씬별 12초 대기)
-      await new Promise(resolve => setTimeout(resolve, 12000));
+      // ✏️ 씬 간 15초 대기 (12초→15초 강화, Rate Limit 안전 마진 확보)
+      if (i < scenes.length - 1) {
+        console.log(`⏳ [씬 간 대기] 씬${scene.number} 완료 → 다음 씬 전 15초 대기 중...`);
+        await new Promise(resolve => setTimeout(resolve, 15000));
+      }
     }
     
     if (Object.keys(zip.files).length > 0) {
