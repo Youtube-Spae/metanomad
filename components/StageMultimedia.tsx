@@ -52,6 +52,16 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
   const [editingSpeaker, setEditingSpeaker] = useState<1 | 2>(1);
   
   const cancelBatchRequest = useRef(false);
+  const [audioDurations, setAudioDurations] = useState<Record<number, number>>({});
+
+  // ✏️ 나레이션 글자수 → 예상 TTS 길이(초) 계산 (실측 기반 6.6자/초)
+  const estimateDuration = (narration: string): number => {
+    if (!narration) return 0;
+    return Math.floor(narration.length / 6.6);
+  };
+
+  // ✏️ WAV blob 크기 → 실제 오디오 길이(초) 계산 (헤더 44바이트 제외, 24kHz 16bit mono)
+  const calcBlobDuration = (blob: Blob): number => Math.round((blob.size - 44) / 48000);
 
   useEffect(() => {
     const syncSpeakers = () => {
@@ -60,15 +70,20 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
         const storedSelectedIds = sessionStorage.getItem('selectedCharacterIds');
         
         if (storedChars && storedSelectedIds) {
-          const allChars = JSON.parse(storedChars);
-          const selectedIds = JSON.parse(storedSelectedIds);
-          const validAllChars = Array.isArray(allChars) ? allChars : [];
+          // ✏️ Fix 3: JSON.parse 각각 try-catch로 감싸 파싱 실패 시 빈 배열 폴백
+          let allChars: any[] = [];
+          let selectedIds: any[] = [];
+          try { allChars = JSON.parse(storedChars); } catch { allChars = []; }
+          try { selectedIds = JSON.parse(storedSelectedIds); } catch { selectedIds = []; }
+
+          const validAllChars = Array.isArray(allChars) ? allChars.filter(c => c && typeof c === 'object') : [];
           const validSelectedIds = Array.isArray(selectedIds) ? selectedIds : [];
           const selectedCharacters = validAllChars.filter((c: any) => validSelectedIds.includes(c.id));
-          
+
           if (selectedCharacters.length > 0) {
             const char1 = selectedCharacters[0];
-            const gender1 = char1.gender.toLowerCase() as 'male' | 'female';
+            // ✏️ Fix 3: gender undefined 시 TypeError 방지 — optional chaining + fallback
+            const gender1 = ((char1.gender?.toLowerCase?.() || 'female') as 'male' | 'female');
             const preset1 = VOICE_PRESETS[gender1][0];
             
             setSpeaker1({ gender: gender1, voiceId: preset1.id, label: preset1.label });
@@ -115,92 +130,98 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
     return buffer;
   };
 
-  const generateAudioBlob = async (text: string, sceneNum: number): Promise<Blob | null> => {
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  const generateAudioBlob = async (text: string, sceneNum: number): Promise<Blob> => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
-      const lines = text.split('\n');
-      const speakers = new Set<string>();
-      lines.forEach(line => {
-        const match = line.match(/^([^:]+):/);
-        if (match) speakers.add(match[1].trim());
-      });
+    // ✏️ 나레이션 형식 감지 → 화자 단위 배열 분리
+    // 곡따옴표 정규화 후 Name:"text" 패턴 직접 추출
+    const splitBySpeaker = (fullText: string): string[] => {
+      const t = fullText
+        .replace(/[\u201C\u201D\u201E\u201F\u00AB\u00BB]/g, '"')
+        .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+      if (t.includes(' / ')) return t.split(' / ').filter(p => p.trim());
+      if (t.includes('\n')) return t.split('\n').filter(p => p.trim());
+      // Name: "text" 형식 직접 추출
+      const turns: string[] = [];
+      const re = /([가-힣A-Za-z0-9]+)\s*:\s*"([^"]+)"/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(t)) !== null) turns.push(`${m[1]}|||${m[2].trim()}`);
+      if (turns.length > 0) return turns;
+      // 1인 독백 — 문장 기준 분리
+      return t.split(/(?<=[.!?。])\s+/).filter(p => p.trim()).length > 1
+        ? t.split(/(?<=[.!?。])\s+/).filter(p => p.trim())
+        : [t];
+    };
 
-      const getVoiceIdForSpeaker = (name: string) => {
-        try {
-          const chars = JSON.parse(
-            sessionStorage.getItem('character_list') || sessionStorage.getItem('characters') || '[]'
-          )
-          const selectedIds = JSON.parse(
-            sessionStorage.getItem('selectedCharacterIds') || '[]'
-          )
-          const selected = chars.filter(
-            (c: any) => selectedIds.includes(c.id)
-          )
-          const match = selected.find(
-            (c: any) => name.toUpperCase()
-              .startsWith(c.name.toUpperCase())
-          )
-          if (match) {
-            return match.gender.toLowerCase() === 'female'
-              ? speaker1.voiceId : speaker2.voiceId
-          }
-        } catch(e) {}
-        return speaker1.voiceId
+    // ✏️ 화자 이름과 콘텐츠 분리 (구분자 |||)
+    const parseTurn = (turn: string): { speaker: string; content: string } => {
+      if (turn.includes('|||')) {
+        const [speaker, content] = turn.split('|||');
+        return { speaker: speaker.trim(), content: content.trim() };
+      }
+      return { speaker: '', content: turn.trim() };
+    };
+
+    const rawTurns = splitBySpeaker(text);
+    const parsedTurns = rawTurns.map(parseTurn).filter(t => t.content.length > 0);
+
+    // ✏️ 등장 순서로 화자-보이스 매핑: 1번째=speaker1(여), 2번째=speaker2(남)
+    const speakerOrder: string[] = [];
+    parsedTurns.forEach(({ speaker }) => {
+      if (speaker && !speakerOrder.includes(speaker)) speakerOrder.push(speaker);
+    });
+    const getVoice = (speaker: string) =>
+      speakerOrder.indexOf(speaker) === 1 ? speaker2.voiceId : speaker1.voiceId;
+
+    console.log(`씬${sceneNum} | 턴수:${parsedTurns.length} | 화자:[${speakerOrder.join('→')}] | 보이스:[${speaker1.voiceId}(여)/${speaker2.voiceId}(남)]`);
+
+    const allPcmBytes: Uint8Array[] = [];
+
+    // ✏️ 핵심 변경: buildChunks 제거 → 턴별 1:1 API 콜
+    // - 화자 레이블(Name: "...") 제거 후 순수 텍스트만 TTS 전송
+    // - voiceConfig 단일화자만 사용 (multiSpeakerVoiceConfig 제거)
+    // - 이미지 싱크: 씬당 3턴 × ~30초 = ~90초 ≈ NarrationDur, 이미지 9장(3장씩 대응)
+    for (let i = 0; i < parsedTurns.length; i++) {
+      const { speaker, content } = parsedTurns[i];
+      const voiceName = getVoice(speaker);
+      console.log(`씬${sceneNum} 턴${i + 1}/${parsedTurns.length} [${speaker || '독백'}→${voiceName}]: ${content.substring(0, 25)}...`);
+
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash-preview-tts", // ✏️ pro→flash (500 RPD)
+          contents: [{ parts: [{ text: content }] }],
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+          },
+        });
+
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (base64Audio) {
+          const bin = atob(base64Audio);
+          const bytes = new Uint8Array(bin.length);
+          for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+          allPcmBytes.push(bytes);
+          console.log(`씬${sceneNum} 턴${i + 1}/${parsedTurns.length} ✅ 완료 (${content.length}자)`);
+        } else {
+          console.warn(`씬${sceneNum} 턴${i + 1}/${parsedTurns.length} ⚠️ 오디오 없음`);
+        }
+      } catch (e: any) {
+        console.error(`씬${sceneNum} 턴${i + 1}/${parsedTurns.length} ❌ 실패:`, e?.message || e);
       }
 
-      let speechConfig: any = {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: speaker1.voiceId },
-        },
-      };
-
-      if (speakers.size === 1) {
-        const speakerName = Array.from(speakers)[0];
-        speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName = getVoiceIdForSpeaker(speakerName);
-      } else if (speakers.size === 2) {
-        const speakerList = Array.from(speakers);
-        speechConfig = {
-          multiSpeakerVoiceConfig: {
-            speakerVoiceConfigs: [
-              {
-                speaker: speakerList[0],
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: getVoiceIdForSpeaker(speakerList[0]) } }
-              },
-              {
-                speaker: speakerList[1],
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: getVoiceIdForSpeaker(speakerList[1]) } }
-              }
-            ]
-          }
-        };
-      }
-      
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: text }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig,
-        },
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!base64Audio) throw new Error("Audio data not found");
-
-      const binaryString = atob(base64Audio);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      const wavHeader = createWavHeader(len, 24000);
-      return new Blob([wavHeader, bytes], { type: 'audio/mpeg' });
-    } catch (error) {
-      console.error("TTS Generation failed:", error);
-      return null;
+      // ✏️ 턴간 7초 대기 — pro 모델 10RPM 기준 (3턴×7s=21s/씬, 씬간 12s → 총 4RPM 안전)
+      if (i < parsedTurns.length - 1) await new Promise(r => setTimeout(r, 7000));
     }
+
+    if (allPcmBytes.length === 0) throw new Error("Audio data not found in response");
+
+    // PCM 연결 → WAV
+    const totalLength = allPcmBytes.reduce((sum, c) => sum + c.length, 0);
+    const combined = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const pcm of allPcmBytes) { combined.set(pcm, offset); offset += pcm.length; }
+    return new Blob([createWavHeader(totalLength, 24000), combined], { type: 'audio/mpeg' });
   };
 
   const generateAudio = async (text: string, filename: string, sceneNum: number) => {
@@ -211,8 +232,12 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
         alert(`${sceneNum}번 장면 음성 생성 중 오류가 발생했습니다.`);
         return;
       }
+      // ✏️ 실제 길이 저장
+      const dur = calcBlobDuration(audioBlob);
+      setAudioDurations(prev => ({ ...prev, [sceneNum]: dur }));
+
       const url = URL.createObjectURL(audioBlob);
-      
+
       const a = document.createElement('a');
       a.href = url;
       a.download = `${filename}.mp3`;
@@ -282,21 +307,27 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
     let failCount = 0;
 
     const retryGenerateAudio = async (
-      narration: string, 
-      sceneNum: number, 
+      narration: string,
+      sceneNum: number,
       maxRetries = 3
-    ) => {
+    ): Promise<Blob | null> => {
       for (let i = 0; i < maxRetries; i++) {
         try {
-          const blob = await generateAudioBlob(narration, sceneNum)
-          if (blob) return blob
+          const blob = await generateAudioBlob(narration, sceneNum);
+          return blob;
         } catch(e: any) {
-          if (e?.status === 429 && i < maxRetries - 1) {
-            await new Promise(r => setTimeout(r, 5000))
-          } else throw e
+          const errMsg = e?.message || String(e);
+          console.error(`씬${sceneNum} TTS 시도 ${i + 1}/${maxRetries} 실패:`, errMsg);
+          if (i < maxRetries - 1) {
+            const delay = (e?.status === 429 || errMsg.includes('429')) ? 8000 : 5000;
+            await new Promise(r => setTimeout(r, delay));
+          } else {
+            // 마지막 시도 실패 시 에러 메시지 노출
+            console.error(`씬${sceneNum} 최종 실패 — 에러:`, errMsg);
+          }
         }
       }
-      return null
+      return null;
     }
 
     for (let i = 0; i < scenes.length; i++) {
@@ -313,6 +344,9 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
       try {
         const audioBlob = await retryGenerateAudio(scene.narrationKOR, scene.number);
         if (audioBlob) {
+          // ✏️ 실제 길이 저장
+          const dur = calcBlobDuration(audioBlob);
+          setAudioDurations(prev => ({ ...prev, [scene.number]: dur }));
           zip.file(`Scene_${scene.number}_Narration.mp3`, audioBlob);
           successCount++;
         } else {
@@ -326,7 +360,8 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
         console.log(`씬 ${scene.number} 완료`);
       }
       
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // ✏️ 3000 → 12000: Gemini TTS API rate limit 대응 (씬별 12초 대기)
+      await new Promise(resolve => setTimeout(resolve, 12000));
     }
     
     if (Object.keys(zip.files).length > 0) {
@@ -344,10 +379,12 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
     }
 
     setIsBatchLoading(false);
-    if (!cancelBatchRequest.current) {
-      alert(`${scenes.length}개 중 ${successCount}개 성공, ${failCount}개 실패`);
-    } else {
+    if (cancelBatchRequest.current) {
       alert("일괄 추출 작업이 중단되었습니다.");
+    } else if (successCount === 0) {
+      alert(`❌ TTS 생성 실패 (0/${scenes.length})\n\nF12 콘솔에서 "씬N TTS 시도" 에러 메시지를 확인해주세요.\n\n가능한 원인:\n• Gemini API 할당량 초과\n• gemini-2.5-pro-preview-tts 모델 접근 불가\n• API 키 문제`);
+    } else {
+      alert(`✅ ${scenes.length}개 중 ${successCount}개 성공${failCount > 0 ? `, ${failCount}개 실패` : ''}`);
     }
   };
 
@@ -437,19 +474,45 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
                   </div>
                 </div>
 
+                {/* ✏️ Task2: 빈 나레이션 씬 경고 */}
+                {scenes.some(s => !s.narrationKOR) && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-bold flex items-center gap-2">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+                    나레이션 없는 씬: {scenes.filter(s => !s.narrationKOR).map(s => `#${s.number}`).join(', ')} — TTS 생성 불가 (Rate Limit 가능성)
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[400px] overflow-y-auto custom-scrollbar pr-2">
                   {scenes.length === 0 ? (
                     <div className="col-span-full py-20 text-center text-stone-400 italic">스토리보드에서 장면을 먼저 생성해주세요.</div>
-                  ) : scenes.map((s) => (
-                    <div key={s.number} className="p-4 border border-stone-100 rounded-xl flex items-center justify-between hover:border-amber-200 transition-colors bg-white shadow-sm">
-                      <div className="flex items-center gap-3">
-                        <span className="text-stone-300 font-bold">{s.number}</span>
-                        <div className="max-w-[220px]">
-                          <p className="text-[11px] font-bold text-stone-800 line-clamp-2 whitespace-pre-line">{s.narrationKOR}</p>
+                  ) : scenes.map((s) => {
+                    const isEmpty = !s.narrationKOR;
+                    const estSec = estimateDuration(s.narrationKOR);
+                    const actualSec = audioDurations[s.number];
+                    return (
+                    <div key={s.number} className={`p-4 border rounded-xl flex items-center justify-between transition-colors bg-white shadow-sm ${isEmpty ? 'border-rose-300 bg-rose-50' : loadingItems[s.number] ? 'border-amber-200' : 'border-stone-100 hover:border-amber-200'}`}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className={`font-bold flex-shrink-0 ${isEmpty ? 'text-rose-400' : 'text-stone-300'}`}>{s.number}</span>
+                        <div className="min-w-0">
+                          {isEmpty ? (
+                            <p className="text-[11px] font-bold text-rose-500">⚠️ 나레이션 없음</p>
+                          ) : (
+                            <p className="text-[11px] font-bold text-stone-800 line-clamp-2 whitespace-pre-line">{s.narrationKOR}</p>
+                          )}
+                          {/* ✏️ Task1: 예상/실제 길이 표시 */}
+                          <div className="flex items-center gap-1 mt-1">
+                            {actualSec != null ? (
+                              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${actualSec >= 80 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                실제 {actualSec}초
+                              </span>
+                            ) : estSec > 0 ? (
+                              <span className="text-[9px] font-bold text-stone-400">예상 ~{estSec}초</span>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button disabled={loadingItems[s.number]} onClick={() => handleDownloadAudio('narration', s.number)} className={`p-2 rounded-full transition-all ${loadingItems[s.number] ? 'text-stone-300 cursor-not-allowed' : 'text-stone-400 hover:text-amber-600 hover:bg-amber-50'}`} title="MP3 생성 및 다운로드">
+                      <div className="flex gap-2 flex-shrink-0">
+                        <button disabled={loadingItems[s.number] || isEmpty} onClick={() => handleDownloadAudio('narration', s.number)} className={`p-2 rounded-full transition-all ${isEmpty ? 'text-stone-200 cursor-not-allowed' : loadingItems[s.number] ? 'text-stone-300 cursor-not-allowed' : 'text-stone-400 hover:text-amber-600 hover:bg-amber-50'}`} title={isEmpty ? '나레이션 없음' : 'MP3 생성 및 다운로드'}>
                           {loadingItems[s.number] ? (
                             <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                           ) : (
@@ -458,10 +521,23 @@ const StageMultimedia: React.FC<Props> = ({ theme, scenes, onNext, onBack }) => 
                         </button>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <div className="pt-6 flex flex-col items-center gap-4">
+                  {/* ✏️ Task1: 배치 전 예상 총 길이 요약 */}
+                  {scenes.length > 0 && !isBatchLoading && (
+                    <div className="text-xs text-stone-500 flex gap-4">
+                      <span>씬 {scenes.filter(s => s.narrationKOR).length}/{scenes.length}개 생성 가능</span>
+                      <span>예상 총 {Math.round(scenes.reduce((sum, s) => sum + estimateDuration(s.narrationKOR), 0) / 60)}분</span>
+                      {Object.keys(audioDurations).length > 0 && (
+                        <span className="text-emerald-600 font-bold">
+                          실제 생성: {Object.values(audioDurations).length}개 (평균 {Math.round((Object.values(audioDurations) as number[]).reduce((a,b)=>a+b,0)/Object.values(audioDurations).length)}초)
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <button disabled={isBatchLoading || scenes.length === 0} onClick={handleBatchDownloadZip} className={`px-10 py-4 text-white rounded-2xl font-black shadow-lg transition-all flex items-center gap-3 ${isBatchLoading || scenes.length === 0 ? 'bg-stone-400 cursor-not-allowed shadow-none' : 'bg-amber-600 shadow-amber-200 hover:bg-amber-700 hover:-translate-y-1'}`}>
                     {isBatchLoading && <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
                     {isBatchLoading ? `생성 중... (${batchProgress.current}/${batchProgress.total})` : '전체 나레이션 MP3 일괄 추출 (ZIP 다운로드)'}

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { WorkflowStage, TravelTheme, Scene, LocationContext, StoryboardHistory, Character } from './types';
-import { generateTravelThemes, generateStoryArc } from './geminiService';
+import { generateTravelThemes, generateStoryArc } from './claudeService';
 import StageInspiration from './components/StageInspiration';
 import StageStoryboard from './components/StageStoryboard';
 import StageMultimedia from './components/StageMultimedia';
@@ -18,6 +18,7 @@ const App: React.FC = () => {
   const [storyDetails, setStoryDetails] = useState<{style: string, reason: string, format?: string} | null>(null);
   const [anchorPrompt, setAnchorPrompt] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadingProgress, setLoadingProgress] = useState<string>('');
   const [characters, setCharacters] = useState<Character[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -85,7 +86,11 @@ const App: React.FC = () => {
     setLoading(true);
     try {
       console.log('App.tsx - 전달받은 캐릭터 수:', selectedCharacters.length);
-      const storyData = await generateStoryArc(theme, location, narrationType, anchorPrompt, selectedCharacters);
+      const storyData = await generateStoryArc(theme, location, narrationType, anchorPrompt, selectedCharacters, setLoadingProgress);
+      // ✏️ Fix 7: 응답 구조 검증 — 빈 씬 배열로 STORYBOARD 진입 방지
+      if (!Array.isArray(storyData.scenes) || storyData.scenes.length === 0) {
+        throw new Error('씬 데이터가 비어있습니다. 다시 시도해주세요.');
+      }
       setScenes(storyData.scenes);
       setStoryDetails({ style: storyData.selectedStyle, reason: storyData.styleReason, format: storyData.metadata?.format || '1인 독백' });
       
@@ -111,13 +116,21 @@ const App: React.FC = () => {
       });
       
       setStage(WorkflowStage.STORYBOARD);
-    } catch (error: any) {
-      console.error("Story generation failed or was cancelled:", error);
-      if (error?.message?.includes("Requested entity was not found")) {
-        alert("API 키가 유효하지 않거나 할당량이 초과되었습니다. 상단의 'API 키 연결' 버튼을 통해 유료 프로젝트의 키를 다시 선택해주세요.");
+    } catch (error: unknown) {
+      // ✏️ Fix 6: any 제거 → unknown + instanceof 타입 narrowing
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error("Story generation failed or was cancelled:", err.message);
+      if (
+        err.message.includes("Requested entity was not found") ||
+        err.message.includes("API_KEY_MISSING") ||
+        err.message.includes("401")
+      ) {
+        alert("API 키가 유효하지 않거나 할당량이 초과되었습니다.\n.env 파일의 VITE_CLAUDE_API_KEY를 확인해주세요.");
         if (window.aistudio) {
           await window.aistudio.openSelectKey();
         }
+      } else if (err.message.includes("씬 데이터가 비어")) {
+        alert("씬 생성에 실패했습니다. 잠시 후 다시 시도해주세요.");
       } else {
         alert("생성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
       }
@@ -150,7 +163,8 @@ const App: React.FC = () => {
             <div className="w-20 h-20 border-4 border-amber-100 border-t-amber-600 rounded-full animate-spin mb-6"></div>
             <div className="text-center space-y-2 mb-8">
               <p className="text-amber-900 text-xl font-bold animate-pulse">따뜻한 기록, 다큐멘터리 시퀀스 구성 중...</p>
-              <p className="text-stone-500 text-sm">깊이 있는 서사를 위해 최대 30초 정도 소요될 수 있습니다.</p>
+              <p className="text-amber-700 text-base font-semibold mt-1 min-h-[24px]">{loadingProgress}</p>
+              <p className="text-stone-400 text-xs mt-1">씬 구조 → 나레이션 14씬 → 20초 안정화 → 이미지 14씬 | 약 8~12분</p>
             </div>
             
             <button 

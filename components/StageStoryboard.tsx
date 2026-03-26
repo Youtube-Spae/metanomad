@@ -64,13 +64,12 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
 
     // ── Sync 계산 헬퍼 ──────────────────────────────────────
     const calcSync = (s: Scene) => {
-      const narDuration = isMulti
-        ? Math.floor((s.narrationKOR || '').length / 4)
-        : Math.floor((s.narrationKOR || '').length / 5);
+      // ✏️ 실측 TTS 속도 6.6자/초 기반으로 통일 (이전: 독백 5자/초, 대화 4자/초 가정)
+      const narDuration = Math.floor((s.narrationKOR || '').length / 6.6);
       const imageCount = s.imagePromptsENG?.length || 0;
-      // ✅ 수정: 컷당 시간을 나레이션÷컷수로 역산 → Sync Gap 0 수렴
-      const imageCoverPerCut = imageCount > 0 ? Math.round(narDuration / imageCount) : 7;
-      const imageCover = imageCount * imageCoverPerCut;
+      // 나레이션÷컷수로 컷당 시간 역산 → 씬 내 Sync Gap 최소화 (기본 10초/컷)
+      const imageCoverPerCut = imageCount > 0 ? Math.round((narDuration / imageCount) * 10) / 10 : 10;
+      const imageCover = imageCount > 0 ? Math.round(imageCount * imageCoverPerCut) : 0;
       const syncGap = narDuration - imageCover;
       return { narDuration, imageCount, imageCover, syncGap, imageCoverPerCut };
     };
@@ -78,6 +77,21 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
     const totalDuration = scenes.reduce((acc, s) => acc + calcSync(s).narDuration, 0);
     const minutes = Math.floor(totalDuration / 60);
     const seconds = totalDuration % 60;
+
+    // stage 변경 감지 헬퍼
+    const getActLabel = (stage: string) => {
+      if (stage?.includes('기') || stage?.includes('Hook'))     return '🎬 기 (Hook) — 시선을 끄는 오프닝';
+      if (stage?.includes('승') || stage?.includes('Build'))    return '🚶 승 (Build-up) — 여정의 깊이';
+      if (stage?.includes('전') || stage?.includes('Climax'))   return '💡 전 (Climax) — 반전과 깨달음';
+      if (stage?.includes('결') || stage?.includes('Outro'))    return '🌅 결 (Outro) — 감성 마무리 & CTA';
+      return stage || '';
+    };
+
+    // 각 막의 대표 씬 찾기
+    const hookScene   = scenes.find(s => s.stage?.includes('기') || s.stage?.includes('Hook'));
+    const buildScene  = scenes.find(s => s.stage?.includes('승') || s.stage?.includes('Build'));
+    const climaxScene = scenes.find(s => s.stage?.includes('전') || s.stage?.includes('Climax'));
+    const outroScene  = scenes.find(s => s.stage?.includes('결') || s.stage?.includes('Outro'));
 
     // ══════════════════════════════════════════════════════
     // Sheet 1: 📋 스토리 요약
@@ -89,7 +103,7 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
     ws1Data.push(['주제', title]);
     ws1Data.push(['총 씬 수', `${scenes.length}개`]);
     ws1Data.push(['예상 러닝타임', `약 ${minutes}분 ${seconds}초`]);
-    ws1Data.push(['스토리 구조', '기(4) → 승(6) → 전(6) → 결(4)']);
+    ws1Data.push(['스토리 구조', `기(Hook) → 승(Build-up) → 전(Climax) → 결(Outro)`]);
     ws1Data.push(['나레이션 형식', isMulti ? '2인 대화형 (캐릭터1 ↔ 캐릭터2)' : '1인 3인칭 나레이션']);
     ws1Data.push(['영상 스타일', storyDetails?.style || 'Warm Documentary']);
     ws1Data.push([]);
@@ -97,48 +111,63 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
     const coreEmotion = theme.category || '일상';
     const firstNar = scenes[0]?.narrationKOR || '';
     ws1Data.push([`[${coreEmotion}] — 캐릭터들이 발견한 것은 ${firstNar.slice(0, 30)}... 였다.`]);
-    ws1Data.push(['기 (Hook)',    (scenes[0]?.narrationKOR  || '').slice(0, 100)]);
-    ws1Data.push(['승 (Build-up)',(scenes[4]?.narrationKOR  || '').slice(0, 100)]);
-    ws1Data.push(['전 (Climax)', (scenes[10]?.narrationKOR || '').slice(0, 100)]);
-    ws1Data.push(['결 (Outro)',   (scenes[16]?.narrationKOR || '').slice(0, 100)]);
+    ws1Data.push(['기 (Hook)',    (hookScene?.narrationKOR   || '').slice(0, 100)]);
+    ws1Data.push(['승 (Build-up)',(buildScene?.narrationKOR  || '').slice(0, 100)]);
+    ws1Data.push(['전 (Climax)', (climaxScene?.narrationKOR || '').slice(0, 100)]);
+    ws1Data.push(['결 (Outro)',   (outroScene?.narrationKOR  || '').slice(0, 100)]);
     ws1Data.push([]);
     ws1Data.push(['■ 기승전결 씬별 요약']);
     ws1Data.push(['씬', 'Stage', '장소', '나레이션 요약']);
-    scenes.forEach((s, idx) => {
-      if (idx === 0)  ws1Data.push(['🎬 기 (Hook) — 시선을 끄는 오프닝']);
-      if (idx === 4)  ws1Data.push(['🚶 승 (Build-up) — 여정의 깊이']);
-      if (idx === 10) ws1Data.push(['💡 전 (Climax) — 반전과 깨달음']);
-      if (idx === 16) ws1Data.push(['🌅 결 (Outro) — 감성 마무리 & CTA']);
+    let prevStage1 = '';
+    scenes.forEach(s => {
+      if (s.stage !== prevStage1) {
+        ws1Data.push([getActLabel(s.stage)]);
+        prevStage1 = s.stage;
+      }
       ws1Data.push([s.number, s.stage, s.placeName || '', (s.narrationKOR || '').slice(0, 120) + '...']);
     });
     const ws1 = XLSX.utils.aoa_to_sheet(ws1Data);
     ws1['!cols'] = [{ wch: 18 }, { wch: 52 }, { wch: 20 }, { wch: 20 }];
 
     // ══════════════════════════════════════════════════════
-    // Sheet 2: 📖 전체 스토리텔링 대본 (이야기 서술형)
+    // Sheet 2: 📖 전체 스토리텔링 대본 (찐 이야기 서술형)
     // ══════════════════════════════════════════════════════
     const ws2Data: any[][] = [];
     ws2Data.push([`📖 ${title} — 전체 스토리텔링 대본`]);
-    const stageHdrs: Record<number, string> = {
-      0:  '🎬 기 (Hook) — 시선을 끄는 오프닝',
-      4:  '🚶 승 (Build-up) — 여정의 깊이',
-      10: '💡 전 (Climax) — 반전과 깨달음',
-      16: '🌅 결 (Outro) — 감성 마무리 & CTA',
-    };
-    scenes.forEach((s, idx) => {
-      if (stageHdrs[idx]) ws2Data.push([stageHdrs[idx]]);
-      ws2Data.push([`씬 ${s.number}`, s.placeName || '']);
-      ws2Data.push(['', s.narrationKOR || '']);
-      ws2Data.push([]);
+    ws2Data.push([]);
+    let prevStage2 = '';
+    scenes.forEach(s => {
+      // 막이 바뀔 때 구분 헤더 삽입
+      if (s.stage !== prevStage2) {
+        if (prevStage2 !== '') ws2Data.push([]); // 막 사이 빈행
+        ws2Data.push([getActLabel(s.stage)]);
+        ws2Data.push([]);
+        prevStage2 = s.stage;
+      }
+      // 장소명 (소제목)
+      ws2Data.push([`📍 ${s.placeName || ''}`]);
+      // 나레이션 전문 (단일 컬럼, 스토리 서술형)
+      ws2Data.push([s.narrationKOR || '']);
+      ws2Data.push([]); // 씬 사이 빈행
     });
     const ws2 = XLSX.utils.aoa_to_sheet(ws2Data);
-    ws2['!cols'] = [{ wch: 10 }, { wch: 22 }, { wch: 95 }];
+    ws2['!cols'] = [{ wch: 100 }];
 
     // ══════════════════════════════════════════════════════
-    // Sheet 3: 🎬 스토리보드 (Sync 4열 포함)
+    // Sheet 3: 🎬 스토리보드 (Sync 4열 + 썸네일 프롬프트 포함)
     // ══════════════════════════════════════════════════════
+    // 썸네일 프롬프트 생성 (climax 씬 기반)
+    const thumbScene = climaxScene || scenes[Math.floor(scenes.length / 2)];
+    const thumbKOR = `[썸네일] ${title} — ${thumbScene?.placeName || ''}: ${(thumbScene?.videoPromptKOR || '').slice(0, 60)} | 주인공 극적 클로즈업, 감성 야경 배경, 텍스트 오버레이 공간 확보, Warm Documentary 스타일, 16:9`;
+    const thumbENG = `[THUMBNAIL] ${(thumbScene?.videoPromptENG || '').slice(0, 130)}, dramatic close-up of main character with expressive emotion, shallow depth of field, warm cinematic bokeh background, text overlay space on left third, YouTube thumbnail composition, 16:9 aspect ratio, Warm Documentary style`;
+
     const ws3Data: any[][] = [];
     ws3Data.push([`🎬 ${title} — 스토리보드`]);
+    ws3Data.push([]);
+    ws3Data.push(['🖼 썸네일 프롬프트']);
+    ws3Data.push(['KOR', thumbKOR]);
+    ws3Data.push(['ENG', thumbENG]);
+    ws3Data.push([]);
     ws3Data.push([
       '#', 'Stage', 'Place',
       'Narration\nDuration(sec)', 'Image\nCount', 'Image Cover\n(sec)', 'Sync Gap\n(sec)',
@@ -161,7 +190,7 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
     });
     const ws3 = XLSX.utils.aoa_to_sheet(ws3Data);
     ws3['!cols'] = [
-      { wch: 4 }, { wch: 11 }, { wch: 16 },
+      { wch: 5 }, { wch: 11 }, { wch: 16 },
       { wch: 10 }, { wch: 8 }, { wch: 10 }, { wch: 9 },
       { wch: 40 }, { wch: 40 },
       { wch: 14 }, { wch: 14 },
@@ -174,6 +203,7 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
     // ══════════════════════════════════════════════════════
     const ws4Data: any[][] = [];
     ws4Data.push(['📤 Grok Automation 이미지 프롬프트 — 씬별 / 1컷 1행 / 컷 사이 빈행 / Grok 복붙용']);
+    ws4Data.push([]);
     ws4Data.push([
       '#', 'Stage', 'Image\nCount', 'Narr\nDur(sec)', 'Image\nCover(sec)', 'Sync\nGap(sec)',
       'Image Prompt (ENG) — 1컷 1행, 컷 사이 빈행 → Grok 복붙용',
@@ -249,13 +279,41 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
               <span className="text-2xl">✨</span>
               <h3 className="font-bold text-amber-900 text-lg">AI 자동 선정 영상 스타일: {storyDetails.style}</h3>
             </div>
-            <div 
-              className="text-sm text-amber-800 leading-relaxed [&_*]:text-sm [&_*]:m-0"
-              style={{ fontSize: '14px', lineHeight: '1.6' }}
-              dangerouslySetInnerHTML={{ __html: storyDetails.reason }}
-            />
+            {/* ✏️ Fix 5: dangerouslySetInnerHTML 제거 → XSS 방지. Claude API 응답은 plaintext로 렌더 */}
+            <p className="text-sm text-amber-800 leading-relaxed" style={{ fontSize: '14px', lineHeight: '1.6' }}>
+              {storyDetails.reason}
+            </p>
           </div>
         )}
+
+        {/* ✏️ 썸네일 프롬프트 섹션 */}
+        {scenes.length > 0 && (() => {
+          const thumbScene = scenes.find(s => s.stage?.includes('전') || s.stage?.includes('Climax')) || scenes[Math.floor(scenes.length / 2)];
+          const title = theme.title || '';
+          const thumbKOR = `[썸네일] ${title} — ${thumbScene?.placeName || ''}: ${(thumbScene?.videoPromptKOR || '').slice(0, 60)} | 주인공 극적 클로즈업, 감성 야경 배경, 텍스트 오버레이 공간 확보, Warm Documentary 스타일, 16:9`;
+          const thumbENG = `[THUMBNAIL] ${(thumbScene?.videoPromptENG || '').slice(0, 130)}, dramatic close-up of main character with expressive emotion, shallow depth of field, warm cinematic bokeh background, text overlay space on left third, YouTube thumbnail composition, 16:9 aspect ratio, Warm Documentary style`;
+          return (
+            <div className="bg-stone-900 border border-stone-700 rounded-2xl p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-lg">🖼</span>
+                <h3 className="font-bold text-stone-100 text-sm uppercase tracking-widest">썸네일 프롬프트</h3>
+                <span className="text-stone-500 text-xs">— {thumbScene?.placeName} 씬 기반</span>
+              </div>
+              <div className="space-y-2">
+                <div className="flex gap-2 items-start">
+                  <span className="text-[10px] font-bold text-amber-400 bg-amber-900/40 px-2 py-0.5 rounded mt-0.5 shrink-0">KOR</span>
+                  <p className="text-[11px] text-stone-300 leading-relaxed break-keep">{thumbKOR}</p>
+                  <button onClick={() => { navigator.clipboard.writeText(thumbKOR); }} className="shrink-0 text-[9px] px-2 py-0.5 bg-stone-700 hover:bg-stone-600 text-stone-300 rounded transition-colors">복사</button>
+                </div>
+                <div className="flex gap-2 items-start">
+                  <span className="text-[10px] font-bold text-blue-400 bg-blue-900/40 px-2 py-0.5 rounded mt-0.5 shrink-0">ENG</span>
+                  <p className="text-[11px] text-stone-400 leading-relaxed break-words italic">{thumbENG}</p>
+                  <button onClick={() => { navigator.clipboard.writeText(thumbENG); }} className="shrink-0 text-[9px] px-2 py-0.5 bg-stone-700 hover:bg-stone-600 text-stone-300 rounded transition-colors">복사</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="overflow-x-auto bg-white rounded-2xl border border-stone-200 shadow-sm">
           <table className="w-full text-left border-collapse">
@@ -324,9 +382,8 @@ const StageStoryboard: React.FC<Props> = ({ theme, scenes, storyDetails, onNext,
                         const format = storyDetails?.format || '1인 독백';
                         const narDuration = format === '2인 대화' ? Math.floor((scene.narrationKOR || "").length / 4) : Math.floor((scene.narrationKOR || "").length / 5);
                         const imgCount = scene.imagePromptsENG?.length || 0;
-                        // ✅ 수정: 컷당 시간 역산 → Sync Gap 0 수렴
-                        const imgCoverPerCut = imgCount > 0 ? Math.round(narDuration / imgCount) : 7;
-                        const imgCover = imgCount * imgCoverPerCut;
+                        const imgCoverPerCut = imgCount > 0 ? Math.round((narDuration / imgCount) * 10) / 10 : 10;
+                        const imgCover = imgCount > 0 ? Math.round(imgCount * imgCoverPerCut) : 0;
                         const syncGap = narDuration - imgCover;
                         const isSynced = Math.abs(syncGap) <= 3;
                         return (

@@ -24,7 +24,12 @@ const CharacterManager: React.FC<Props> = ({ isOpen, onClose, onSelectionChange 
 
   const saveCharacters = (newCharacters: Character[]) => {
     setCharacters(newCharacters);
-    localStorage.setItem('character_list', JSON.stringify(newCharacters));
+    try {
+      localStorage.setItem('character_list', JSON.stringify(newCharacters));
+    } catch (e) {
+      alert('저장 공간이 부족합니다. 일부 캐릭터를 삭제 후 다시 시도해주세요.');
+      console.error('localStorage quota exceeded:', e);
+    }
     window.dispatchEvent(new Event('characterSelectionChanged'));
   };
 
@@ -163,6 +168,36 @@ const CharacterManager: React.FC<Props> = ({ isOpen, onClose, onSelectionChange 
     }
   };
 
+  // ✏️ 캐릭터 백업 내보내기 (JSON 파일)
+  const handleExport = () => {
+    if (characters.length === 0) { alert('등록된 캐릭터가 없습니다.'); return; }
+    const json = JSON.stringify(characters, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url;
+    a.download = `metanomad_characters_${new Date().toISOString().slice(0,10)}.json`;
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  // ✏️ 캐릭터 백업 가져오기 (JSON 파일)
+  const importRef = useRef<HTMLInputElement>(null);
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target?.result as string);
+        if (!Array.isArray(parsed)) throw new Error('Invalid format');
+        const merged = [...characters];
+        parsed.forEach((c: Character) => { if (!merged.find(m => m.id === c.id)) merged.push(c); });
+        saveCharacters(merged);
+        alert(`${parsed.length}개 캐릭터 가져오기 완료!`);
+      } catch { alert('파일 형식이 올바르지 않습니다.'); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
   const filteredCharacters = characters.filter(c => filter === 'All' || c.gender === filter);
 
   if (!isOpen) return null;
@@ -184,9 +219,20 @@ const CharacterManager: React.FC<Props> = ({ isOpen, onClose, onSelectionChange 
         </div>
         
         <div className="flex-1 overflow-y-auto p-6 custom-scrollbar flex flex-col gap-8">
+          {/* ✏️ 백업/복원 버튼 */}
+          <div className="flex gap-2">
+            <button onClick={handleExport} className="flex-1 py-2 text-xs font-bold bg-stone-100 text-stone-600 hover:bg-stone-200 rounded-lg transition-colors flex items-center justify-center gap-1">
+              📤 백업 저장 (JSON)
+            </button>
+            <button onClick={() => importRef.current?.click()} className="flex-1 py-2 text-xs font-bold bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg transition-colors flex items-center justify-center gap-1">
+              📥 백업 불러오기
+            </button>
+            <input ref={importRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
+          </div>
+
           {/* Add Character Form Toggle */}
           {!isAdding ? (
-            <button 
+            <button
               onClick={() => setIsAdding(true)}
               className="w-full py-3 border-2 border-dashed border-stone-300 text-stone-600 rounded-xl font-bold hover:bg-stone-50 hover:border-stone-400 transition-all flex items-center justify-center gap-2"
             >

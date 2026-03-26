@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { TravelTheme, LocationContext, Character } from '../types';
-import { analyzeImageForThemes, generateTravelThemes } from '../geminiService';
+import { analyzeImageForThemes, generateTravelThemes } from '../claudeService';
 
 interface Props {
   themes: TravelTheme[];
@@ -124,15 +124,18 @@ const StageInspiration: React.FC<Props> = ({ themes, usedThemeTitles, characters
         try {
           if (storedCharacters) {
             const parsed = JSON.parse(storedCharacters);
-            allCharacters = Array.isArray(parsed) ? parsed : [];
+            // ✏️ Fix 4: 배열 내 null/undefined 항목 제거로 c.id 접근 시 TypeError 방지
+            allCharacters = Array.isArray(parsed)
+              ? parsed.filter((c: any) => c && typeof c === 'object' && c.id)
+              : [];
           }
         } catch (e) {
           allCharacters = [];
         }
-        
+
         // Bug 3: Restore selected character objects accurately based on both
-        const validIds = allCharacters.length > 0 
-          ? parsedIds.filter(id => allCharacters.some(c => c.id === id))
+        const validIds = allCharacters.length > 0
+          ? parsedIds.filter(id => allCharacters.some(c => c?.id === id))
           : parsedIds;
           
         setSelectedCharacterIds(validIds);
@@ -262,12 +265,20 @@ const StageInspiration: React.FC<Props> = ({ themes, usedThemeTitles, characters
       const selectedChars = (characters || []).filter(c => selectedCharacterIds.includes(c.id));
       const data = await generateTravelThemes(cats, selectedChars);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      setThemes(data);
-    } catch (err) {
+      // ✏️ 빈 배열 반환 시 기존 테마 복원 (API 실패/rate limit 감지)
+      if (!data || data.length === 0) {
+        setThemes(prevThemesRef.current);
+        setErrorMsg("테마를 불러오지 못했습니다. 잠시 후 재시도 버튼을 눌러주세요.");
+      } else {
+        setThemes(data);
+      }
+    } catch (err: any) {
       console.error("AI 추천 실패:", err);
       setThemes(prevThemesRef.current);
-      setErrorMsg("응답 시간이 초과되었습니다. 재시도 버튼을 눌러주세요");
-      alert("응답 시간이 초과되었습니다. 재시도 버튼을 눌러주세요");
+      // ✏️ 실제 에러 메시지 표시 (rate limit, 모델 오류 등 원인 파악용)
+      const errMsg = err?.message || String(err);
+      setErrorMsg(`테마 로드 실패: ${errMsg.slice(0, 120)}`);
+      alert(`테마 로드 실패\n\n${errMsg}`);
     } finally {
       setIsLoading(false);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
